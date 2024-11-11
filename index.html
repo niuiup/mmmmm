@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tracking Colored Markers</title>
+    <!-- Подключение OpenCV.js -->
+    <script async src="https://docs.opencv.org/4.x/opencv.js" onload="onOpenCvReady();" type="text/javascript"></script>
+    <style>
+        body { text-align: center; font-family: Arial, sans-serif; }
+        canvas { border: 1px solid black; margin-top: 10px; }
+        .controls { margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <h1>Цветные Метки Трекинг</h1>
+    <video id="video" width="640" height="480" autoplay></video>
+    <canvas id="canvasOutput" width="640" height="480"></canvas>
+    <p id="status">Загрузка OpenCV...</p>
+
+    <div class="controls">
+        <button onclick="startTracking()">Начать отслеживание меток</button>
+        <p>Настройки цвета для отслеживания (HSV):</p>
+        <label>Нижний предел H: <input type="range" id="lowerH" min="0" max="180" value="0"></label>
+        <label>С: <input type="range" id="lowerS" min="0" max="255" value="100"></label>
+        <label>V: <input type="range" id="lowerV" min="0" max="255" value="100"></label>
+        <br>
+        <label>Верхний предел H: <input type="range" id="upperH" min="0" max="180" value="10"></label>
+        <label>С: <input type="range" id="upperS" min="0" max="255" value="255"></label>
+        <label>V: <input type="range" id="upperV" min="0" max="255" value="255"></label>
+    </div>
+
+    <script>
+        let video = document.getElementById('video');
+        let canvas = document.getElementById('canvasOutput');
+        let ctx = canvas.getContext('2d');
+        let tracking = false;
+        let cap, src, hsv, mask, contours, hierarchy;
+
+        function onOpenCvReady() {
+            document.getElementById('status').innerText = 'OpenCV.js Загружен! Запустите камеру.';
+            startVideoStream();
+        }
+
+        // Запуск видеопотока с камеры
+        function startVideoStream() {
+            navigator.mediaDevices.getUserMedia({ video: true })
+                .then(function(stream) {
+                    video.srcObject = stream;
+                    video.play();
+                })
+                .catch(function(err) {
+                    console.error("Ошибка доступа к камере: " + err);
+                });
+        }
+
+        // Функция для начала отслеживания
+        function startTracking() {
+            if (!tracking) {
+                document.getElementById('status').innerText = 'Отслеживание меток запущено.';
+                tracking = true;
+
+                cap = new cv.VideoCapture(video);
+                src = new cv.Mat(video.height, video.width, cv.CV_8UC4);
+                hsv = new cv.Mat(video.height, video.width, cv.CV_8UC3);
+                mask = new cv.Mat(video.height, video.width, cv.CV_8UC1);
+                contours = new cv.MatVector();
+                hierarchy = new cv.Mat();
+
+                trackColor();
+            }
+        }
+
+        function trackColor() {
+            if (!tracking) return;
+
+            // Считывание текущих настроек цвета
+            let lowerBound = new cv.Mat(video.height, video.width, cv.CV_8UC3, new cv.Scalar(
+                parseInt(document.getElementById("lowerH").value),
+                parseInt(document.getElementById("lowerS").value),
+                parseInt(document.getElementById("lowerV").value)
+            ));
+            let upperBound = new cv.Mat(video.height, video.width, cv.CV_8UC3, new cv.Scalar(
+                parseInt(document.getElementById("upperH").value),
+                parseInt(document.getElementById("upperS").value),
+                parseInt(document.getElementById("upperV").value)
+            ));
+
+            // Чтение кадра с камеры
+            cap.read(src);
+            cv.cvtColor(src, hsv, cv.COLOR_RGBA2RGB);
+            cv.cvtColor(hsv, hsv, cv.COLOR_RGB2HSV);
+
+            // Создаем маску по цветовым пределам
+            cv.inRange(hsv, lowerBound, upperBound, mask);
+
+            // Находим контуры на маске
+            cv.findContours(mask, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+            src.copyTo(hsv);
+
+            for (let i = 0; i < contours.size(); i++) {
+                let contour = contours.get(i);
+                let area = cv.contourArea(contour);
+
+                // Игнорируем мелкие контуры
+                if (area < 500) continue;
+
+                let moments = cv.moments(contour, false);
+                let cX = moments.m10 / moments.m00;
+                let cY = moments.m01 / moments.m00;
+
+                // Рисуем круг и координаты центра метки
+                cv.circle(hsv, new cv.Point(cX, cY), 10, [0, 255, 0, 255], -1);
+                cv.putText(hsv, `(${Math.round(cX)}, ${Math.round(cY)})`, new cv.Point(cX + 10, cY), cv.FONT_HERSHEY_SIMPLEX, 0.5, [255, 255, 255, 255], 2);
+            }
+
+            // Отображаем обработанное изображение на canvas
+            cv.imshow('canvasOutput', hsv);
+
+            // Устанавливаем цикл отслеживания
+            requestAnimationFrame(trackColor);
+
+            // Очистка ресурсов
+            lowerBound.delete();
+            upperBound.delete();
+        }
+
+        // Очистка ресурсов при закрытии страницы
+        window.addEventListener("beforeunload", () => {
+            src && src.delete(); hsv && hsv.delete(); mask && mask.delete();
+            contours && contours.delete(); hierarchy && hierarchy.delete();
+            cap && cap.delete();
+        });
+    </script>
+</body>
+</html>
